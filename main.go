@@ -80,8 +80,6 @@ func syslogRun(scanner *bufio.Scanner) {
 }
 
 func syslogCreate(socket string) *bufio.Scanner {
-	//datagramReadBufferSize := 64 * 1024
-
 	unixAddr, err := net.ResolveUnixAddr("unixgram", socket)
 	if err != nil {
 		log.Fatalln("unable to resolve:", err)
@@ -89,18 +87,35 @@ func syslogCreate(socket string) *bufio.Scanner {
 
 	listener, err := net.ListenUnixgram("unixgram", unixAddr)
 	if err != nil {
-		log.Fatalln("listen error:", err)
+		if syslogDebug != "" {
+			log.Fatalln("listen error:", err)
+		} else {
+			// do nothing??
+		}
 	}
-	//listener.SetReadBuffer(datagramReadBufferSize)
 
 	scanner := bufio.NewScanner(listener)
 	return scanner
 }
 
+var (
+	syslogDebug = os.Getenv("SYSLOG_DEBUG")
+)
+
+func debugLog(format string, v ...interface{}) {
+	if syslogDebug != "" {
+		log.Printf(("syslog_init: " + format + "\n"), v...)
+	}
+}
+
 func main() {
+	// get config from the environment
+	syslogSocket := os.Getenv("SYSLOG_SOCKET")
+	//subReaper := os.Getenv("INIT_SUBREAPER")
+
+	// TODO flags to control whether syslog is wanted
 	if len(os.Args) < 1 {
-		log.Fatalln("No Command specified")
-		os.Exit(1)
+		log.Fatalln("Error: no command specified")
 	}
 
 	// check path for the executable
@@ -143,9 +158,15 @@ func main() {
 		syscall.SIGUSR2,
 	)
 
-	socket := "/dev/log"
-	syslog := syslogCreate(socket)
-	go syslogRun(syslog)
+	if syslogSocket != "" {
+		// handle syslogSocket file existing (ie, we are restarted)
+		if err := os.Remove(syslogSocket); err != nil && !os.IsNotExist(err) {
+			log.Fatalln(err)
+		}
+
+		syslog := syslogCreate(syslogSocket)
+		go syslogRun(syslog)
+	}
 
 	err = cmdToRun.Start()
 	if err != nil {
