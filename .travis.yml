@@ -1,0 +1,12 @@
+language: bash
+services: docker
+
+env:
+  - VARIANT=alpine
+  - VARIANT=debian
+
+script:
+  - travis_retry docker build -t syslog-init:${VARIANT} -f Dockerfile.${VARIANT}.
+  - docker run -i --rm syslog-init:${VARIANT} sh -c 'logger -t loggin foo bar && sleep 0.5'
+
+# vim:set et ts=2 sw=2:
