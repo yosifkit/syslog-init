@@ -6,7 +6,10 @@ env:
   - VARIANT=debian
 
 script:
-  - travis_retry docker build -t syslog-init:${VARIANT} -f Dockerfile.${VARIANT} .
-  - docker run -i --rm syslog-init:${VARIANT} sh -c 'logger -t loggin foo bar && sleep 0.5'
+  - |
+    travis_retry docker build -t syslog-init:${VARIANT} -f Dockerfile.${VARIANT} .
+    out="$(docker run -i --rm syslog-init:${VARIANT} sh -c 'logger -t loggin foo bar && sleep 0.5')"
+    exp='loggin: foo bar'
+    [ "$out" = "$exp" ]
 
 # vim:set et ts=2 sw=2:
