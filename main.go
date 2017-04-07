@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -12,6 +10,7 @@ import (
 	"syscall"
 
 	"golang.org/x/crypto/ssh/terminal"
+	"gopkg.in/mcuadros/go-syslog.v2"
 	//	"golang.org/x/sys/unix"
 )
 
@@ -40,7 +39,7 @@ func createSignalListener(signals ...os.Signal) <-chan os.Signal {
 	return incomingSigs
 }
 
-func zombieReaper(incomingChildSigs <-chan os.Signal) {
+func zombieReaper(proc *os.Process, incomingChildSigs <-chan os.Signal) {
 	for {
 		<-incomingChildSigs
 		// https://github.com/docker/docker/issues/11529
@@ -50,7 +49,15 @@ func zombieReaper(incomingChildSigs <-chan os.Signal) {
 		)
 		for {
 			pid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, &usage)
-			if err != nil || pid == 0 {
+			if err != nil {
+				debugLog("%s", err)
+				break
+			}
+			if pid == proc.Pid {
+				// this is the pid of our main child
+				os.Exit(status.ExitStatus())
+			}
+			if pid == 0 {
 				break
 			}
 		}
@@ -68,42 +75,44 @@ func forwardSignals(proc *os.Process, incomingSigs <-chan os.Signal) {
 	}
 }
 
-func syslogRun(scanner *bufio.Scanner) {
-	for scanner.Scan() {
-		line := scanner.Text()
-		// TODO remove syslog extra data?
-		fmt.Printf("%s\n", line)
-	}
-	if err := scanner.Err(); err != nil {
-		log.Println("scanner error:", err)
+func syslogRun(sysServer *syslog.Server, logs syslog.LogPartsChannel) {
+	sysServer.Boot()
+	for logParts := range logs {
+		debugLog("%q", logParts)
+		if hostname, ok := logParts["hostname"]; ok && hostname != "" {
+			fmt.Printf("%s ", hostname)
+		}
+		if tag, ok := logParts["tag"]; ok && tag != "" {
+			fmt.Printf("%s ", tag)
+		}
+		if msg, ok := logParts["message"]; ok && msg != "" {
+			// https://github.com/mcuadros/go-syslog/blob/v2.2.1/internal/syslogparser/rfc5424/rfc5424.go#L107-L121
+			fmt.Printf("%s", msg)
+		} else if msg, ok := logParts["content"]; ok && msg != "" {
+			// https://github.com/mcuadros/go-syslog/blob/v2.2.1/internal/syslogparser/rfc3164/rfc3164.go#L79-L89
+			fmt.Printf("%s", msg)
+		}
+		fmt.Println()
 	}
 }
 
-func syslogCreate(socket string) *bufio.Scanner {
-	unixAddr, err := net.ResolveUnixAddr("unixgram", socket)
-	if err != nil {
-		log.Fatalln("unable to resolve:", err)
-	}
+func syslogCreate(socket string) (sysServer *syslog.Server, logs syslog.LogPartsChannel) {
+	logs = make(syslog.LogPartsChannel, 128)
 
-	listener, err := net.ListenUnixgram("unixgram", unixAddr)
-	if err != nil {
-		if syslogDebug != "" {
-			log.Fatalln("listen error:", err)
-		} else {
-			// do nothing??
-		}
-	}
+	sysServer = syslog.NewServer()
+	sysServer.SetFormat(syslog.Automatic)
+	sysServer.SetHandler(syslog.NewChannelHandler(logs))
+	sysServer.ListenUnixgram("/dev/log")
 
-	scanner := bufio.NewScanner(listener)
-	return scanner
+	return
 }
 
 var (
-	syslogDebug = os.Getenv("SYSLOG_DEBUG")
+	syslogDebug = os.Getenv("SYSLOG_DEBUG") != ""
 )
 
 func debugLog(format string, v ...interface{}) {
-	if syslogDebug != "" {
+	if syslogDebug {
 		log.Printf(("syslog_init: " + format + "\n"), v...)
 	}
 }
@@ -144,9 +153,6 @@ func main() {
 
 	// setup a listener for SIGCHILD
 	childSignals := createSignalListener(syscall.SIGCHLD)
-	// start the (grim)reaper
-	// and reap all the children
-	go zombieReaper(childSignals)
 
 	// setup a listener for all the signals we want to forward
 
@@ -164,14 +170,25 @@ func main() {
 			log.Fatalln(err)
 		}
 
-		syslog := syslogCreate(syslogSocket)
-		go syslogRun(syslog)
+		// make sure anyone can write to syslog socket
+		oldmask := syscall.Umask(0)
+
+		syslog, sysChan := syslogCreate(syslogSocket)
+		go syslogRun(syslog, sysChan)
+
+		// restore default umask
+		syscall.Umask(oldmask)
 	}
 
 	err = cmdToRun.Start()
 	if err != nil {
 		log.Fatalln(err)
 	}
+
+	// start the (grim)reaper
+	// and reap all the children
+	go zombieReaper(cmdToRun.Process, childSignals)
+
 	go forwardSignals(cmdToRun.Process, incomingSignalsToForward)
 
 	err = cmdToRun.Wait()
@@ -180,7 +197,7 @@ func main() {
 			waitStatus := exitError.Sys().(syscall.WaitStatus)
 			os.Exit(waitStatus.ExitStatus())
 		}
-		// TODO can't wait since our reaper already did
+		// can't wait since our reaper already did
 		fmt.Printf("Unable to wait on cmd. %v\n", err)
 		os.Exit(1)
 	}
