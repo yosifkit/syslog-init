@@ -9,4 +9,4 @@ COPY *.go ./
 RUN set -ex; apk add --no-cache git; eval "go get $BUILD_FLAGS"; apk del git
 
 ENTRYPOINT ["syslog-init"]
-CMD ["bash"]
+CMD ["sh"]
