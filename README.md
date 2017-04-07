@@ -41,12 +41,10 @@ $ docker cp sysl:/go/bin/syslog-init ./
 $ docker rm -f sysl
 ```
 
-Alternatively we could just use cat to grab the file to the host:
+Alternatively we could just use tar to pipe the file to the host:
 
 ```console
-$ docker run -i --rm syslog-init cat /go/bin/syslog-init > syslog-init
-# we'll also need to chmod it
-$ chmod +x syslog-init
+$ docker run -i --rm syslog-init tar -c -C /go/bin/ syslog-init | tar -x -C ./
 ```
 
 ### add `syslog-init` to my project
