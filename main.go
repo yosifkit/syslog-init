@@ -82,6 +82,9 @@ func syslogRun(sysServer *syslog.Server, logs syslog.LogPartsChannel) {
 		if hostname, ok := logParts["hostname"]; ok && hostname != "" {
 			fmt.Printf("%s ", hostname)
 		}
+		if timestamp, ok := logParts["timestamp"]; ok && timestamp != "" {
+			fmt.Printf("%s ", timestamp)
+		}
 		if tag, ok := logParts["tag"]; ok && tag != "" {
 			fmt.Printf("%s ", tag)
 		}
@@ -102,7 +105,7 @@ func syslogCreate(socket string) (sysServer *syslog.Server, logs syslog.LogParts
 	sysServer = syslog.NewServer()
 	sysServer.SetFormat(syslog.Automatic)
 	sysServer.SetHandler(syslog.NewChannelHandler(logs))
-	sysServer.ListenUnixgram("/dev/log")
+	sysServer.ListenUnixgram(socket)
 
 	return
 }
